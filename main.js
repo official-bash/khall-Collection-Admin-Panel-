@@ -2,10 +2,13 @@
 let sheetDataset = [];
 let uniqueUcsList = [];
 let activeSelectedUc = null;
-let currentLanguage = localStorage.getItem('khal_app_lang') || 'en';
+let currentLanguage = localStorage.getItem('khal_app_lang') || 'ur';
+
+// Admin Share Log state – keyed by srNo, value: { ur: bool, en: bool }
+let adminShareLog = {};
 
 // ─── Navigation History Stack ──────────────────────────────────────────────
-// Each entry: { tab: 'home'|'addLocation'|'nearest', ucName: null|string }
+// Each entry: { tab: 'home'|'addLocation', ucName: null|string }
 let navHistoryStack = [];
 let isNavigatingBack = false; // guard to avoid push during popstate
 
@@ -20,22 +23,17 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // Intercept browser / device back button
 window.addEventListener('popstate', (event) => {
-    // If there's history in our stack, go back in-app
     if (navHistoryStack.length > 0) {
-        // Re-push so the browser URL state stays the same (single-page app)
         history.pushState({ nav: 'current' }, '', window.location.href);
-
         const prev = navHistoryStack.pop();
         isNavigatingBack = true;
 
         if (prev.tab === 'home') {
             if (prev.uc) {
-                // Go back to a UC detail view
-                activeSelectedUc = null; // reset so switchTab doesn't interfere
+                activeSelectedUc = null;
                 _showHomeTab();
                 handleUcCardClick(prev.uc);
             } else {
-                // Go back to the UC grid
                 activeSelectedUc = null;
                 _showHomeTab();
                 backToUcGrid();
@@ -43,15 +41,9 @@ window.addEventListener('popstate', (event) => {
         } else if (prev.tab === 'addLocation') {
             activeSelectedUc = null;
             _applyTabSwitch('addLocation');
-        } else if (prev.tab === 'nearest') {
-            activeSelectedUc = null;
-            _showHomeTab();
         }
 
         isNavigatingBack = false;
-    } else {
-        // Nothing in our stack – let the browser handle it (exits PWA / closes tab)
-        // Do nothing extra — natural behaviour
     }
 });
 
@@ -80,7 +72,6 @@ function applyLanguage() {
     document.documentElement.dir = isUrdu ? 'rtl' : 'ltr';
     document.documentElement.lang = currentLanguage;
 
-    // Adjust main font weight and family dynamically
     if (isUrdu) {
         document.body.classList.remove('font-sans');
         document.body.classList.add('font-nastaliq');
@@ -89,20 +80,17 @@ function applyLanguage() {
         document.body.classList.add('font-sans');
     }
 
-    // Update Page Title
     document.title = i18n[currentLanguage].title;
 
-    // Simple text labels translation
     document.getElementById('headerTitle').innerText = i18n[currentLanguage].dashboardTitle;
     document.getElementById('headerSub').innerText = i18n[currentLanguage].townName;
     document.getElementById('totalPointsLabel').innerText = i18n[currentLanguage].totalPoints + ": ";
     document.getElementById('spinnerLoadingText').innerText = i18n[currentLanguage].loading;
+    document.getElementById('adminBadgeLabel').innerText = i18n[currentLanguage].adminBadge;
 
-    // Search Bar i18n
     document.getElementById('omniSearchInput').placeholder = i18n[currentLanguage].searchPlaceholder;
     document.getElementById('ucSectionHeading').innerText = i18n[currentLanguage].ucSectionHeader;
     document.getElementById('backToUcsBtn').innerText = i18n[currentLanguage].backToUcs;
-    document.getElementById('nearestBtnLabel').innerText = i18n[currentLanguage].nearestBtn;
 
     // Form Content i18n
     document.getElementById('formTitleText').innerText = i18n[currentLanguage].formTitle;
@@ -121,15 +109,12 @@ function applyLanguage() {
     document.getElementById('posterActionTitle').innerText = i18n[currentLanguage].posterCall;
     document.getElementById('posterFooterText').innerText = i18n[currentLanguage].posterFooter;
 
-    // Language Toggle Text Update
     document.getElementById('langText').innerText = isUrdu ? 'English' : 'اردو';
 
-    // Navbar Labels Update
     document.getElementById('navHomeLabel').innerText = isUrdu ? 'ہوم' : 'Home';
     document.getElementById('navAddLabel').innerText = isUrdu ? 'لوکیشن' : 'Add Link';
-    document.getElementById('navNearestLabel').innerText = isUrdu ? 'قریبی' : 'Nearest';
+    document.getElementById('navLogLabel').innerText = isUrdu ? 'لاگ' : 'Log';
 
-    // Re-render components with translated static attributes
     if (sheetDataset.length > 0) {
         renderUcCardsGrid(uniqueUcsList);
         populateFormUcDropdowns();
@@ -156,9 +141,7 @@ function fetchDatasetFromGoogleSheet() {
 
     fetch(url, { redirect: 'follow' })
     .then(response => {
-        if (!response.ok) {
-            throw new Error("HTTP error: " + response.status);
-        }
+        if (!response.ok) throw new Error("HTTP error: " + response.status);
         return response.text();
     })
     .then(text => {
@@ -170,18 +153,18 @@ function fetchDatasetFromGoogleSheet() {
             throw new Error("سرور سے غیر متوقع جواب آیا۔ / Unexpected response from server.");
         }
 
-        if(payload.status === "success") {
+        if (payload.status === "success") {
             sheetDataset = payload.data;
             document.getElementById('totalPointsBadge').innerText = sheetDataset.length;
-            
-            // Compile unique list of UCs
             updateUcList();
 
-            // Render UI components asynchronously
-            document.getElementById('appSpinner').classList.add('hidden');
-            switchTab('home');
-            renderUcCardsGrid(uniqueUcsList);
-            populateFormUcDropdowns();
+            // Also fetch admin share log in parallel
+            fetchAdminShareLog().then(() => {
+                document.getElementById('appSpinner').classList.add('hidden');
+                switchTab('home');
+                renderUcCardsGrid(uniqueUcsList);
+                populateFormUcDropdowns();
+            });
         } else {
             throw new Error(payload.message || "Unknown error from Apps Script");
         }
@@ -193,7 +176,163 @@ function fetchDatasetFromGoogleSheet() {
     });
 }
 
-// Compile unique UC list based on current language
+// Fetch the admin share log from the AdminShareLog sheet
+function fetchAdminShareLog() {
+    const url = API_URL + "?action=getShareLog";
+    return fetch(url, { redirect: 'follow' })
+        .then(r => r.text())
+        .then(text => {
+            try {
+                const payload = JSON.parse(text);
+                if (payload.status === "success" && Array.isArray(payload.data)) {
+                    adminShareLog = {};
+                    payload.data.forEach(row => {
+                        const srNo = row["نمبر شمار (Sr No)"] || row["srNo"] || "";
+                        const lang = (row["زبان (Language)"] || row["lang"] || "").trim().toLowerCase();
+                        if (srNo) {
+                            if (!adminShareLog[srNo]) adminShareLog[srNo] = { ur: false, en: false };
+                            if (lang === 'ur') adminShareLog[srNo].ur = true;
+                            if (lang === 'en') adminShareLog[srNo].en = true;
+                        }
+                    });
+                }
+            } catch (e) {
+                console.warn("Could not parse share log:", e);
+            }
+        })
+        .catch(err => {
+            console.warn("Could not load share log:", err);
+        });
+}
+
+// ─── Admin WhatsApp / Location Actions ─────────────────────────────────────
+
+// Admin: Request location from responsible person via Web Share API
+function adminRequestLocation(phone, name) {
+    const msg = i18n[currentLanguage].adminLocationRequestMsg.replace('{name}', name);
+    if (navigator.share) {
+        navigator.share({ text: msg })
+            .catch(err => {
+                console.log("Share cancelled:", err);
+                // Fallback: copy to clipboard
+                navigator.clipboard.writeText(msg).then(() => {
+                    showToast("پیغام کاپی کر لیا گیا – واٹس ایپ میں خود پیسٹ کریں", "info");
+                }).catch(() => {});
+            });
+    } else {
+        navigator.clipboard.writeText(msg).then(() => {
+            showToast("پیغام کاپی کر لیا گیا – واٹس ایپ میں خود پیسٹ کریں", "info");
+        }).catch(() => {});
+    }
+}
+
+// Admin: Open WhatsApp greeting via Web Share API (avoids Business WA auto-routing)
+function adminOpenWhatsApp(phone, name) {
+    const greeting = i18n[currentLanguage].adminWhatsappGreeting.replace('{name}', name);
+    if (navigator.share) {
+        navigator.share({ text: greeting })
+            .catch(err => console.log("WhatsApp share cancelled:", err));
+    } else {
+        navigator.clipboard.writeText(greeting).then(() => {
+            showToast("سلام کاپی کر لیا گیا", "info");
+        }).catch(() => {});
+    }
+}
+
+// ─── Share Log Recording ────────────────────────────────────────────────────
+
+// Log share action to Google Sheets AdminShareLog tab
+function logShareToSheet(point, lang, shareType) {
+    const srNo    = point["نمبر شمار"] || "";
+    const uc      = point["یو سی"] || "";
+    const name    = point["پوائنٹ ذمہ دار"] || point["Point responsible"] || "";
+    const mobile  = point["موبائل نمبر"] || "";
+    const address = point["پوائنٹ کا ایڈریس"] || point["location points"] || "";
+
+    const logUrl = API_URL
+        + "?action=logShare"
+        + "&srNo=" + encodeURIComponent(srNo)
+        + "&uc=" + encodeURIComponent(uc)
+        + "&name=" + encodeURIComponent(name)
+        + "&mobile=" + encodeURIComponent(mobile)
+        + "&address=" + encodeURIComponent(address)
+        + "&lang=" + encodeURIComponent(lang)
+        + "&shareType=" + encodeURIComponent(shareType);
+
+    fetch(logUrl, { redirect: 'follow' })
+        .then(r => r.text())
+        .then(text => {
+            try {
+                const res = JSON.parse(text);
+                if (res.status === "success") {
+                    showToast(i18n[currentLanguage].adminShareLogged, "success");
+                    // Update local state
+                    if (!adminShareLog[srNo]) adminShareLog[srNo] = { ur: false, en: false };
+                    if (lang === 'ur') adminShareLog[srNo].ur = true;
+                    if (lang === 'en') adminShareLog[srNo].en = true;
+                    // Update share button color
+                    updateShareButtonColor(srNo);
+                } else {
+                    showToast(i18n[currentLanguage].adminShareLogError, "error");
+                }
+            } catch (e) {
+                console.warn("Log parse error:", e);
+            }
+        })
+        .catch(err => {
+            console.warn("Log request failed:", err);
+            showToast(i18n[currentLanguage].adminShareLogError, "error");
+        });
+}
+
+// Update the color of the share button for a given srNo
+function updateShareButtonColor(srNo) {
+    const btn = document.querySelector(`.btn-share[data-sr-no="${srNo}"]`);
+    if (!btn) return;
+    const logEntry = adminShareLog[String(srNo)];
+    if (logEntry && (logEntry.ur || logEntry.en)) {
+        btn.classList.remove('not-sent');
+        btn.classList.add('sent');
+        // Both languages sent
+        if (logEntry.ur && logEntry.en) {
+            btn.classList.add('fully-sent');
+        }
+    }
+}
+
+// ─── Show Share Log Stats ────────────────────────────────────────────────────
+
+function showShareLogStats() {
+    _pushNav(_getCurrentNavState());
+
+    const navHome = document.getElementById('navHomeBtn');
+    const navAdd  = document.getElementById('navAddBtn');
+    const navLog  = document.getElementById('navLogBtn');
+    if (navHome) navHome.classList.remove('active');
+    if (navAdd)  navAdd.classList.remove('active');
+    if (navLog)  navLog.classList.add('active');
+
+    const totalShared = Object.keys(adminShareLog).length;
+    const urShared    = Object.values(adminShareLog).filter(v => v.ur).length;
+    const enShared    = Object.values(adminShareLog).filter(v => v.en).length;
+    const bothShared  = Object.values(adminShareLog).filter(v => v.ur && v.en).length;
+    const totalPoints = sheetDataset.length;
+
+    showToast(
+        `شیئر لاگ: کل ${totalPoints} میں سے ${totalShared} پوائنٹس شیئر ہو چکے ہیں (اردو: ${urShared} | EN: ${enShared} | دونوں: ${bothShared})`,
+        "info"
+    );
+
+    // Switch to home so user still sees the cards
+    _showHomeTab();
+    document.getElementById('ucGridSection').classList.remove('hidden');
+    document.getElementById('pointsListSection').classList.add('hidden');
+    if (navHome) navHome.classList.add('active');
+    if (navLog)  navLog.classList.remove('active');
+}
+
+// ─── UC List & Rendering ────────────────────────────────────────────────────
+
 function updateUcList() {
     const allUcs = sheetDataset.map(row => {
         if (currentLanguage === 'ur') {
@@ -205,12 +344,9 @@ function updateUcList() {
     uniqueUcsList = [...new Set(allUcs)];
 }
 
-// Render Homepage UC Category Cards UI elements
 function renderUcCardsGrid(ucs) {
     const gridContainer = document.getElementById('ucCardGrid');
     gridContainer.innerHTML = '';
-
-    // Ensure the unique list matches the language preference
     updateUcList();
 
     uniqueUcsList.forEach((ucName, index) => {
@@ -221,10 +357,23 @@ function renderUcCardsGrid(ucs) {
             return rowUc.trim() === ucName.trim();
         }).length;
 
+        // Count shared points in this UC
+        const sharedCount = sheetDataset.filter(row => {
+            const rowUc = currentLanguage === 'ur'
+                ? (row["یو سی"] || "")
+                : (row["uc"] || row["یو سی"] || "");
+            const srNo = String(row["نمبر شمار"]);
+            return rowUc.trim() === ucName.trim() && adminShareLog[srNo] && (adminShareLog[srNo].ur || adminShareLog[srNo].en);
+        }).length;
+
         const cardNode = document.createElement('div');
         const staggerClass = index < 12 ? ` stagger-${(index % 12) + 1}` : '';
         cardNode.className = `uc-card${staggerClass}`;
         cardNode.onclick = () => handleUcCardClick(ucName);
+
+        const progressPct = hubsCount > 0 ? Math.round((sharedCount / hubsCount) * 100) : 0;
+        const progressColor = progressPct === 100 ? '#22c55e' : progressPct > 0 ? '#f59e0b' : '#e11d48';
+
         cardNode.innerHTML = `
             <div class="uc-card-icon">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 22px; height: 22px;">
@@ -233,21 +382,20 @@ function renderUcCardsGrid(ucs) {
             </div>
             <h3 class="uc-card-title">${ucName}</h3>
             <span class="uc-card-badge">${hubsCount} ${i18n[currentLanguage].pointsCount}</span>
+            <div class="uc-share-progress" style="margin-top: 6px; font-size: 11px; color: ${progressColor}; font-weight: 700;">
+                📤 ${sharedCount}/${hubsCount} شیئر
+            </div>
         `;
         gridContainer.appendChild(cardNode);
     });
     document.getElementById('ucGridSection').classList.remove('hidden');
 }
 
-// Handler triggering deep drill list display
 function handleUcCardClick(ucName) {
-    // Push current state before drilling down
     _pushNav({ tab: 'home', uc: null });
-
     activeSelectedUc = ucName;
     document.getElementById('ucGridSection').classList.add('hidden');
-    
-    // Extract the filtered points under the selected UC
+
     const filteredPoints = sheetDataset.filter(row => {
         const rowUc = currentLanguage === 'ur'
             ? (row["یو سی"] || "")
@@ -255,42 +403,32 @@ function handleUcCardClick(ucName) {
         return rowUc.trim() === ucName.trim();
     });
     document.getElementById('pointsSectionHeader').innerText = `${i18n[currentLanguage].pointsListHeader}: ${ucName}`;
-    
     renderPointsListMarkup(filteredPoints);
 }
 
-// Return state machine focus tracking view frame context
 function backToUcGrid() {
     document.getElementById('pointsListSection').classList.add('hidden');
     document.getElementById('ucGridSection').classList.remove('hidden');
     document.getElementById('omniSearchInput').value = '';
     document.getElementById('searchStats').classList.add('hidden');
     activeSelectedUc = null;
-    
-    // Reset active nav tab state to home
+
     const navHome = document.getElementById('navHomeBtn');
-    const navNearest = document.getElementById('navNearestBtn');
+    const navLog  = document.getElementById('navLogBtn');
     if (navHome) navHome.classList.add('active');
-    if (navNearest) navNearest.classList.remove('active');
+    if (navLog)  navLog.classList.remove('active');
 }
 
 // Parse coordinates out of standard Google Maps URLs
 function parseCoordsFromUrl(url) {
     if (!url) return null;
-    
-    // Pattern 1: @lat,lng
+
     let match = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
-    if (match) {
-        return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
-    }
+    if (match) return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
 
-    // Pattern 2: q=lat,lng or query=lat,lng
     match = url.match(/[?&](q|query)=(-?\d+\.\d+),(-?\d+\.\d+)/);
-    if (match) {
-        return { lat: parseFloat(match[2]), lng: parseFloat(match[3]) };
-    }
+    if (match) return { lat: parseFloat(match[2]), lng: parseFloat(match[3]) };
 
-    // Pattern 3: any sequence of "lat,lng" floats
     match = url.match(/(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)/);
     if (match) {
         const lat = parseFloat(match[1]);
@@ -302,115 +440,7 @@ function parseCoordsFromUrl(url) {
     return null;
 }
 
-// Haversine Distance formula implementation
-function calculateDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371; // Earth radius in km
-    const dLat = deg2rad(lat2 - lat1);
-    const dLon = deg2rad(lon2 - lon1);
-    const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c; // Distance in kilometers
-}
-
-function deg2rad(deg) {
-    return deg * (Math.PI / 180);
-}
-
-// Geolocation Proximity Engine
-function findNearestPoints() {
-    // Push current state before switching to nearest
-    _pushNav(_getCurrentNavState());
-
-    const navHome = document.getElementById('navHomeBtn');
-    const navAdd = document.getElementById('navAddBtn');
-    const navNearest = document.getElementById('navNearestBtn');
-    if (navHome) navHome.classList.remove('active');
-    if (navAdd) navAdd.classList.remove('active');
-    if (navNearest) navNearest.classList.add('active');
-
-    // Always ensure home tab is visible (fixes bug when called from addLocation tab)
-    const homeScreen = document.getElementById('homeTabScreen');
-    const addLocScreen = document.getElementById('addLocationTabScreen');
-    homeScreen.classList.remove('hidden');
-    addLocScreen.classList.add('hidden');
-    activeSelectedUc = null;
-
-    if (!navigator.geolocation) {
-        showToast(i18n[currentLanguage].gpsUnsupported, "error");
-        if (navHome) navHome.classList.add('active');
-        if (navNearest) navNearest.classList.remove('active');
-        return;
-    }
-
-    showToast(i18n[currentLanguage].gpsAcquiring, "info");
-
-    navigator.geolocation.getCurrentPosition(position => {
-        const userLat = position.coords.latitude;
-        const userLng = position.coords.longitude;
-
-        // Calculate distance to all points containing coordinates
-        const pointsWithDistance = sheetDataset.map(point => {
-            let coords = null;
-            if (point["cordinates"]) {
-                coords = parseCoordsFromUrl(point["cordinates"].trim());
-            }
-            if (!coords && point["Google Map Link"]) {
-                coords = parseCoordsFromUrl(point["Google Map Link"].trim());
-            }
-            if (coords) {
-                const distance = calculateDistance(userLat, userLng, coords.lat, coords.lng);
-                return { ...point, distance };
-            }
-            return { ...point, distance: Infinity };
-        }).filter(point => point.distance !== Infinity);
-
-        if (pointsWithDistance.length === 0) {
-            showToast(i18n[currentLanguage].noCoordsPoints, "error");
-            if (navHome) navHome.classList.add('active');
-            if (navNearest) navNearest.classList.remove('active');
-            return;
-        }
-
-        // Sort points by distance ascending
-        pointsWithDistance.sort((a, b) => a.distance - b.distance);
-
-        // Get top 5 closest points
-        const nearestPoints = pointsWithDistance.slice(0, 5);
-
-        // Show results in the home tab's points list
-        document.getElementById('ucGridSection').classList.add('hidden');
-        document.getElementById('pointsListSection').classList.remove('hidden');
-        document.getElementById('pointsSectionHeader').innerText = i18n[currentLanguage].nearestPointsHeader;
-
-        renderPointsListMarkup(nearestPoints, true);
-    }, error => {
-        console.error("Geolocation Error: ", error);
-        let msg = i18n[currentLanguage].gpsError;
-        if (error.code === error.PERMISSION_DENIED) {
-            msg = i18n[currentLanguage].gpsDenied;
-        }
-        showToast(msg, "error");
-        
-        // Fall back to manual UC search
-        _showHomeTab();
-        backToUcGrid();
-        
-        const searchInput = document.getElementById('omniSearchInput');
-        if (searchInput) {
-            searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            searchInput.focus();
-        }
-    }, {
-        enableHighAccuracy: true,
-        timeout: 8000,
-        maximumAge: 0
-    });
-}
-
-// Render localized detailed point components cards lists layout grid system
+// Render detailed point card list
 function renderPointsListMarkup(pointsList, showDistance = false) {
     const listContainer = document.getElementById('pointsContainerList');
     listContainer.innerHTML = '';
@@ -433,52 +463,39 @@ function renderPointsListMarkup(pointsList, showDistance = false) {
         }
         const cleanPhone = point["موبائل نمبر"] ? point["موبائل نمبر"].replace(/[^0-9]/g, "") : "";
         const srNo = point["نمبر شمار"];
-        
-        // Get bilingual UC name
+
         const ucName = currentLanguage === 'ur'
             ? (point["یو سی"] || "")
             : (point["uc"] || point["یو سی"] || "");
 
-        // Get bilingual Point Name
         const pointName = currentLanguage === 'ur'
             ? (point["پوائنٹ کا نام"] || point["Point Name"] || `پوائنٹ #${srNo}`)
             : (point["Point Name"] || point["پوائنٹ کا نام"] || `Point #${srNo}`);
 
-        // Get bilingual Point Responsible
         const responsiblePerson = currentLanguage === 'ur'
             ? (point["پوائنٹ ذمہ دار"] || "")
             : (point["Point responsible"] || point["پوائنٹ ذمہ دار"] || "");
 
-        // Get bilingual Point Address
-        const address = currentLanguage === 'ur' 
-            ? (point["پوائنٹ کا ایڈریس"] || point["location points"] || '') 
+        const address = currentLanguage === 'ur'
+            ? (point["پوائنٹ کا ایڈریس"] || point["location points"] || '')
             : (point["location points"] || point["پوائنٹ کا ایڈریس"] || '');
 
-        // Setup dynamic distance badges
         let distanceBadgeMarkup = '';
         if (showDistance && point.distance !== undefined && point.distance !== Infinity) {
             const isClosest = index === 0;
             const distanceClass = isClosest ? 'badge-distance closest' : 'badge-distance normal';
             const badgeText = isClosest ? `${i18n[currentLanguage].closestBadge} | ` : '';
-            
-            let distanceStr = '';
-            if (point.distance < 1) {
-                const meters = Math.round(point.distance * 1000);
-                distanceStr = `${meters} ${i18n[currentLanguage].meters}`;
-            } else {
-                distanceStr = `${point.distance.toFixed(1)} ${i18n[currentLanguage].kilometers}`;
-            }
-            
-            distanceBadgeMarkup = `
-                <span class="${distanceClass}">
-                    📍 ${badgeText} ${distanceStr} ${i18n[currentLanguage].away}
-                </span>`;
+            let distanceStr = point.distance < 1
+                ? `${Math.round(point.distance * 1000)} ${i18n[currentLanguage].meters}`
+                : `${point.distance.toFixed(1)} ${i18n[currentLanguage].kilometers}`;
+            distanceBadgeMarkup = `<span class="${distanceClass}">📍 ${badgeText} ${distanceStr} ${i18n[currentLanguage].away}</span>`;
         }
 
         const pointCard = document.createElement('div');
         const staggerClass = index < 12 ? ` stagger-${(index % 12) + 1}` : '';
         pointCard.className = `point-card${staggerClass}`;
-        
+
+        // ── MAP BUTTON ──────────────────────────────────────────────────────
         let mapBtnMarkup = '';
         if (mapLink) {
             const mapBtnText = i18n[currentLanguage].getDirections || i18n[currentLanguage].mapBtn;
@@ -490,14 +507,48 @@ function renderPointsListMarkup(pointsList, showDistance = false) {
                     ${mapBtnText}
                 </a>`;
         } else {
+            // ADMIN: No map link → request location via Web Share API
+            const safePhone  = cleanPhone.replace(/'/g, "\\'");
+            const safeName   = responsiblePerson.replace(/'/g, "\\'");
             mapBtnMarkup = `
-                <button onclick="triggerDirectAddLocationLink('${ucName}', '${srNo}')" class="btn btn-add-map btn-flex">
+                <button onclick="adminRequestLocation('${safePhone}', '${safeName}')" class="btn btn-add-map btn-flex">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;">
-                        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
                     </svg>
                     ${i18n[currentLanguage].addMapBtn}
                 </button>`;
         }
+
+        // ── WHATSAPP BUTTON ─────────────────────────────────────────────────
+        // ADMIN: Use Web Share API with Urdu greeting
+        const safePhoneWA = cleanPhone.replace(/'/g, "\\'");
+        const safeNameWA  = responsiblePerson.replace(/'/g, "\\'");
+        const whatsappBtnMarkup = `
+            <button onclick="adminOpenWhatsApp('${safePhoneWA}', '${safeNameWA}')" class="btn btn-whatsapp btn-flex">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;">
+                    <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.458L0 24zm6.59-3.559c1.674.993 3.336 1.488 5.275 1.489 5.626 0 10.201-4.577 10.204-10.203.002-2.723-1.054-5.283-2.977-7.207C17.228 2.597 14.673 1.54 11.95 1.539 6.323 1.539 1.75 6.117 1.748 11.743c-.001 1.99.52 3.84 1.514 5.461l-.993 3.627 3.778-.99z"/>
+                </svg>
+                ${i18n[currentLanguage].whatsappBtn}
+            </button>`;
+
+        // ── SHARE BUTTON ─────────────────────────────────────────────────────
+        const logEntry = adminShareLog[String(srNo)];
+        const isSentUR = logEntry && logEntry.ur;
+        const isSentEN = logEntry && logEntry.en;
+        const isSentAny = isSentUR || isSentEN;
+        const isSentBoth = isSentUR && isSentEN;
+        let shareBtnClass = `btn btn-share${isSentAny ? ' sent' : ' not-sent'}${isSentBoth ? ' fully-sent' : ''}`;
+        let shareLabel = i18n[currentLanguage].shareBtn;
+        if (isSentBoth) shareLabel = '✓ ' + shareLabel;
+        else if (isSentAny) shareLabel = '◑ ' + shareLabel;
+
+        const shareBtnMarkup = `
+            <button onclick="openShareModal('${srNo}')" class="${shareBtnClass}" data-sr-no="${srNo}" title="${i18n[currentLanguage].shareBtn}">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v16"/>
+                </svg>
+                <span>${shareLabel}</span>
+            </button>`;
 
         pointCard.innerHTML = `
             <div class="point-card-header">
@@ -526,18 +577,8 @@ function renderPointsListMarkup(pointsList, showDistance = false) {
 
             <div class="point-card-actions">
                 ${mapBtnMarkup}
-                <a href="https://wa.me/${cleanPhone}" target="_blank" class="btn btn-whatsapp btn-flex">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;">
-                        <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.458L0 24zm6.59-3.559c1.674.993 3.336 1.488 5.275 1.489 5.626 0 10.201-4.577 10.204-10.203.002-2.723-1.054-5.283-2.977-7.207C17.228 2.597 14.673 1.54 11.95 1.539 6.323 1.539 1.75 6.117 1.748 11.743c-.001 1.99.52 3.84 1.514 5.461l-.993 3.627 3.778-.99zm11.378-7.7c-.3-.15-1.774-.875-2.049-.976-.276-.1-.476-.15-.676.15-.2.3-.775.976-.95 1.176-.175.2-.35.225-.65.075-.3-.15-1.267-.467-2.413-1.49-.893-.797-1.496-1.78-1.672-2.08-.175-.3-.019-.462.13-.61.135-.133.3-.35.45-.525.15-.175.2-.3.3-.5.1-.2.05-.375-.025-.525-.075-.15-.676-1.625-.926-2.225-.244-.589-.491-.51-.676-.519-.174-.008-.374-.01-.574-.01-.2 0-.525.075-.8.375-.275.3-1.05 1.025-1.05 2.5s1.075 2.9 1.225 3.1c.15.2 2.115 3.23 5.124 4.53.716.31 1.274.495 1.71.635.72.23 1.375.197 1.894.12.577-.087 1.774-.725 2.024-1.425.25-.7.25-1.3 1.75-1.425-.075-.125-.275-.2-.575-.35z"/>
-                    </svg>
-                    ${i18n[currentLanguage].whatsappBtn}
-                </a>
-                <button onclick="openShareModal('${point["نمبر شمار"]}')" class="btn btn-share" title="${i18n[currentLanguage].shareBtn}">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v16"/>
-                    </svg>
-                    <span>${i18n[currentLanguage].shareBtn}</span>
-                </button>
+                ${whatsappBtnMarkup}
+                ${shareBtnMarkup}
             </div>
         `;
         listContainer.appendChild(pointCard);
@@ -546,11 +587,11 @@ function renderPointsListMarkup(pointsList, showDistance = false) {
     document.getElementById('pointsListSection').classList.remove('hidden');
 }
 
-// Global Omni Database Search logic calculation
+// Global Omni Database Search
 function handleSearch() {
     const query = document.getElementById('omniSearchInput').value.trim().toLowerCase();
     const statsContainer = document.getElementById('searchStats');
-    
+
     if (!query) {
         statsContainer.classList.add('hidden');
         if (activeSelectedUc) {
@@ -562,24 +603,24 @@ function handleSearch() {
     }
 
     const hits = sheetDataset.filter(row => {
-        const addressUrdu = (row["پوائنٹ کا ایڈریس"] || "").toLowerCase();
+        const addressUrdu   = (row["پوائنٹ کا ایڈریس"] || "").toLowerCase();
         const addressEnglish = (row["location points"] || "").toLowerCase();
-        const zimadarName = (row["پوائنٹ ذمہ دار"] || "").toLowerCase();
-        const zimadarNameEnglish = (row["Point responsible"] || "").toLowerCase();
-        const ucCell = (row["یو سی"] || "").toLowerCase();
-        const ucCellEnglish = (row["uc"] || "").toLowerCase();
-        
-        return addressUrdu.includes(query) || 
-               addressEnglish.includes(query) || 
+        const zimadarName   = (row["پوائنٹ ذمہ دار"] || "").toLowerCase();
+        const zimadarNameEn = (row["Point responsible"] || "").toLowerCase();
+        const ucCell        = (row["یو سی"] || "").toLowerCase();
+        const ucCellEn      = (row["uc"] || "").toLowerCase();
+
+        return addressUrdu.includes(query) ||
+               addressEnglish.includes(query) ||
                zimadarName.includes(query) ||
-               zimadarNameEnglish.includes(query) ||
+               zimadarNameEn.includes(query) ||
                ucCell.includes(query) ||
-               ucCellEnglish.includes(query);
+               ucCellEn.includes(query);
     });
 
     document.getElementById('ucGridSection').classList.add('hidden');
     document.getElementById('pointsSectionHeader').innerText = `${i18n[currentLanguage].searchResults} (${hits.length} ${i18n[currentLanguage].foundPoints})`;
-    
+
     let summaryText = i18n[currentLanguage].searchSummary
         .replace("{total}", sheetDataset.length)
         .replace("{count}", hits.length);
@@ -590,23 +631,20 @@ function handleSearch() {
     renderPointsListMarkup(hits);
 }
 
-// Contextual Quick shortcut bridge route map linking to update menu option
+// Contextual shortcut to Add Location form
 function triggerDirectAddLocationLink(ucName, srNo) {
-    // Push current home/UC state before jumping to addLocation
     _pushNav(_getCurrentNavState());
     _applyTabSwitch('addLocation');
     document.getElementById('formUcSelect').value = ucName;
     populateFormSerialNumbers();
     document.getElementById('formSrNoSelect').value = srNo;
-    
     showToast(i18n[currentLanguage].toastAutoSelected, "info");
 }
 
-// Dynamic select dropdown option populate mapping matrix
+// Dynamic select dropdown option populate
 function populateFormUcDropdowns() {
     const ucDropdown = document.getElementById('formUcSelect');
     ucDropdown.innerHTML = `<option value="">${i18n[currentLanguage].selectUcDefault}</option>`;
-
     uniqueUcsList.forEach(uc => {
         const opt = document.createElement('option');
         opt.value = uc;
@@ -615,20 +653,18 @@ function populateFormUcDropdowns() {
     });
 }
 
-// Populate nested conditional dropdown based on selected parent category list
 function populateFormSerialNumbers() {
     const selectedUc = document.getElementById('formUcSelect').value;
     const srDropdown = document.getElementById('formSrNoSelect');
     srDropdown.innerHTML = `<option value="">${i18n[currentLanguage].selectPointDefault}</option>`;
-
     if (!selectedUc) return;
 
     const missingMapPoints = sheetDataset.filter(row => {
         const rowUc = currentLanguage === 'ur'
             ? (row["یو سی"] || "")
             : (row["uc"] || row["یو سی"] || "");
-        const isMatch = rowUc.trim() === selectedUc.trim();
-        const hasNoMap = (!row["Google Map Link"] || row["Google Map Link"].trim() === "") && 
+        const isMatch  = rowUc.trim() === selectedUc.trim();
+        const hasNoMap = (!row["Google Map Link"] || row["Google Map Link"].trim() === "") &&
                          (!row["cordinates"] || row["cordinates"].trim() === "");
         return isMatch && hasNoMap;
     });
@@ -641,7 +677,7 @@ function populateFormSerialNumbers() {
     missingMapPoints.forEach(point => {
         const opt = document.createElement('option');
         opt.value = point["نمبر شمار"];
-        const address = currentLanguage === 'ur' 
+        const address = currentLanguage === 'ur'
             ? (point["پوائنٹ کا ایڈریس"] || point["location points"] || '')
             : (point["location points"] || point["پوائنٹ کا ایڈریس"] || '');
         opt.innerText = `${i18n[currentLanguage].serial} ${point["نمبر شمار"]} - ${address}`;
@@ -649,30 +685,26 @@ function populateFormSerialNumbers() {
     });
 }
 
-// Submit form parameters using GET action
 function submitLocationUpdate() {
-    const uc = document.getElementById('formUcSelect').value;
-    const srNo = document.getElementById('formSrNoSelect').value;
+    const uc        = document.getElementById('formUcSelect').value;
+    const srNo      = document.getElementById('formSrNoSelect').value;
     const userInput = document.getElementById('formMapUrlInput').value.trim();
-    const password = document.getElementById('formPasswordInput').value.trim();
+    const password  = document.getElementById('formPasswordInput').value.trim();
 
     if (!uc || !srNo || !userInput || !password) {
         showToast(i18n[currentLanguage].toastAllFields, "error");
         return;
     }
 
-    // Find the selected point row in our dataset using unique Serial Number
     const targetPoint = sheetDataset.find(row => String(row["نمبر شمار"]) === String(srNo));
     if (!targetPoint) {
         showToast("پوائنٹ نہیں ملا / Point not found", "error");
         return;
     }
 
-    // Always send the canonical Urdu UC name to the Apps Script to match the spreadsheet cell exactly
     const canonicalUc = targetPoint["یو سی"] || uc;
-
     const isRawCoords = /^-?\d+\.\d+\s*,\s*-?\d+\.\d+$/.test(userInput);
-    const isUrl = userInput.startsWith("http://") || userInput.startsWith("https://");
+    const isUrl       = userInput.startsWith("http://") || userInput.startsWith("https://");
 
     if (!isRawCoords && !isUrl) {
         showToast(i18n[currentLanguage].toastValidUrl, "error");
@@ -688,15 +720,12 @@ function submitLocationUpdate() {
     } else {
         mapLinkParam = userInput;
         const parsed = parseCoordsFromUrl(userInput);
-        if (parsed) {
-            cordinatesParam = `${parsed.lat},${parsed.lng}`;
-        }
+        if (parsed) cordinatesParam = `${parsed.lat},${parsed.lng}`;
     }
 
     document.getElementById('appSpinner').classList.remove('hidden');
     document.getElementById('addLocationTabScreen').classList.add('opacity-40', 'pointer-events-none');
 
-    // Constructing clean query params for GET request
     const updateUrl = API_URL
         + "?action=updateLocation"
         + "&uc=" + encodeURIComponent(canonicalUc)
@@ -712,15 +741,9 @@ function submitLocationUpdate() {
     })
     .then(text => {
         let response;
-        try {
-            response = JSON.parse(text);
-        } catch (e) {
-            console.error("JSON Parse Error on update. Raw:", text.substring(0, 500));
-            throw new Error("سرور سے غیر متوقع جواب آیا۔ / Unexpected server response.");
-        }
+        try { response = JSON.parse(text); } catch (e) { throw new Error("Unexpected server response."); }
         document.getElementById('appSpinner').classList.add('hidden');
         document.getElementById('addLocationTabScreen').classList.remove('opacity-40', 'pointer-events-none');
-
         if (response.status === "success") {
             showToast(i18n[currentLanguage].toastUpdated, "success");
             document.getElementById('formMapUrlInput').value = '';
@@ -740,47 +763,37 @@ function submitLocationUpdate() {
 
 // ─── Internal Navigation Helpers ──────────────────────────────────────────
 
-// Push a state onto the in-app history stack (skipped during back navigation)
 function _pushNav(state) {
     if (isNavigatingBack) return;
     navHistoryStack.push(state);
-    // Keep stack bounded
     if (navHistoryStack.length > 30) navHistoryStack.shift();
 }
 
-// Read the current navigation state for pushing before a transition
 function _getCurrentNavState() {
-    const homeScreen = document.getElementById('homeTabScreen');
     const addLocScreen = document.getElementById('addLocationTabScreen');
-    if (!addLocScreen.classList.contains('hidden')) {
-        return { tab: 'addLocation', uc: null };
-    }
-    if (activeSelectedUc) {
-        return { tab: 'home', uc: activeSelectedUc };
-    }
+    if (!addLocScreen.classList.contains('hidden')) return { tab: 'addLocation', uc: null };
+    if (activeSelectedUc) return { tab: 'home', uc: activeSelectedUc };
     return { tab: 'home', uc: null };
 }
 
-// Show the home tab DOM without modifying history
 function _showHomeTab() {
     const navHome = document.getElementById('navHomeBtn');
-    const navAdd = document.getElementById('navAddBtn');
-    const navNearest = document.getElementById('navNearestBtn');
+    const navAdd  = document.getElementById('navAddBtn');
+    const navLog  = document.getElementById('navLogBtn');
     if (navHome) navHome.classList.add('active');
-    if (navAdd) navAdd.classList.remove('active');
-    if (navNearest) navNearest.classList.remove('active');
+    if (navAdd)  navAdd.classList.remove('active');
+    if (navLog)  navLog.classList.remove('active');
     document.getElementById('homeTabScreen').classList.remove('hidden');
     document.getElementById('addLocationTabScreen').classList.add('hidden');
 }
 
-// Low-level tab switch (no history push)
 function _applyTabSwitch(target) {
     const navHome = document.getElementById('navHomeBtn');
-    const navAdd = document.getElementById('navAddBtn');
-    const navNearest = document.getElementById('navNearestBtn');
+    const navAdd  = document.getElementById('navAddBtn');
+    const navLog  = document.getElementById('navLogBtn');
     if (navHome) navHome.classList.remove('active');
-    if (navAdd) navAdd.classList.remove('active');
-    if (navNearest) navNearest.classList.remove('active');
+    if (navAdd)  navAdd.classList.remove('active');
+    if (navLog)  navLog.classList.remove('active');
 
     if (target === 'addLocation') {
         if (navAdd) navAdd.classList.add('active');
@@ -801,15 +814,10 @@ function _applyTabSwitch(target) {
     }
 }
 
-// Tab viewport layout context swapper (public – used by navbar & code)
 function switchTab(target) {
-    // Push current state for back-button
-    if (!isNavigatingBack) {
-        _pushNav(_getCurrentNavState());
-    }
+    if (!isNavigatingBack) _pushNav(_getCurrentNavState());
 
     if (target === 'home') {
-        // Navbar Home always resets to UC grid
         activeSelectedUc = null;
         _showHomeTab();
         document.getElementById('ucGridSection').classList.remove('hidden');
@@ -821,13 +829,13 @@ function switchTab(target) {
     }
 }
 
-// Modal and Text Sharing options controllers
+// ─── Share Modal ────────────────────────────────────────────────────────────
+
 let activeShareReferenceKey = null;
 
 function openShareModal(referenceKey) {
     activeShareReferenceKey = referenceKey;
-    
-    // Apply current language translations
+
     document.getElementById('shareModalTitle').innerText = i18n[currentLanguage].shareModalTitle;
     document.getElementById('shareModalDesc').innerText = i18n[currentLanguage].shareModalDesc;
     document.getElementById('shareOptPosterTitle').innerText = i18n[currentLanguage].shareOptPosterTitle;
@@ -837,8 +845,19 @@ function openShareModal(referenceKey) {
 
     // Set default share language toggle
     const langRadio = document.querySelector(`input[name="shareLangToggle"][value="${currentLanguage}"]`);
-    if (langRadio) {
-        langRadio.checked = true;
+    if (langRadio) langRadio.checked = true;
+
+    // Color language pills based on share history
+    const logEntry = adminShareLog[String(referenceKey)];
+    const urLabel = document.querySelector('label[for="shareLangUr"]');
+    const enLabel = document.querySelector('label[for="shareLangEn"]');
+    if (urLabel) {
+        urLabel.classList.toggle('lang-pill-sent', !!(logEntry && logEntry.ur));
+        urLabel.classList.toggle('lang-pill-not-sent', !(logEntry && logEntry.ur));
+    }
+    if (enLabel) {
+        enLabel.classList.toggle('lang-pill-sent', !!(logEntry && logEntry.en));
+        enLabel.classList.toggle('lang-pill-not-sent', !(logEntry && logEntry.en));
     }
 
     const modal = document.getElementById('shareOptionsModal');
@@ -863,14 +882,15 @@ function handleShareOption(option) {
     }, 300);
 }
 
-// Custom Toast Engine notifications rendering controller using style.css classes
+// ─── Toast Engine ────────────────────────────────────────────────────────────
+
 function showToast(msg, type = "success") {
     const shelf = document.getElementById('toastNotificationShelf');
     if (!shelf) return;
-    
+
     const block = document.createElement('div');
     block.className = `toast ${type}`;
-    
+
     let svgIcon = '';
     if (type === 'success') {
         svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; flex-shrink: 0;"><polyline points="20 6 9 17 4 12"/></svg>`;
@@ -879,14 +899,12 @@ function showToast(msg, type = "success") {
     } else {
         svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; flex-shrink: 0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
     }
-    
+
     block.innerHTML = `<span>${svgIcon}</span><span class="flex-1">${msg}</span>`;
-    
     shelf.appendChild(block);
-    
+
     setTimeout(() => {
         block.classList.add('dismissing');
         setTimeout(() => block.remove(), 300);
     }, 4000);
 }
-
