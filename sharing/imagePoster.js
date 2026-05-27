@@ -1,24 +1,24 @@
 
 // Premium HTML Canvas Dynamic Graphic Image Poster Maker – Admin Panel Version
-function generateAndSharePosterImage(type, referenceKey, targetLang, waWindow = null) {
+// ROLE: Generates and downloads the poster image to the device gallery.
+// After downloading, admin taps "Step 2: WhatsApp" in the modal to send the
+// downloaded image to the responsible person via WhatsApp.
+function generateAndSharePosterImage(type, referenceKey, targetLang) {
     const lang = targetLang || currentLanguage;
     const canvasTitle = document.getElementById('canvasDynamicTitle');
     const canvasBody  = document.getElementById('canvasDynamicBody');
 
-    // Temporarily apply translations to the poster's hardcoded headers
-    document.getElementById('posterMainTitle').innerText  = i18n[lang].posterTitle;
-    document.getElementById('posterSubTitle').innerText   = i18n[lang].posterSubtitle;
-    document.getElementById('posterBrandTitle').innerText = i18n[lang].posterDawat;
+    // Apply translations to the poster's hardcoded headers
+    document.getElementById('posterMainTitle').innerText   = i18n[lang].posterTitle;
+    document.getElementById('posterSubTitle').innerText    = i18n[lang].posterSubtitle;
+    document.getElementById('posterBrandTitle').innerText  = i18n[lang].posterDawat;
     document.getElementById('posterActionTitle').innerText = i18n[lang].posterCall;
     document.getElementById('posterFooterText').innerText  = i18n[lang].posterFooter;
 
     const canvasContainer = document.getElementById('imagePosterGeneratorCanvas');
     canvasContainer.setAttribute('dir', lang === 'ur' ? 'rtl' : 'ltr');
 
-    let filename    = "Qurbani-Campaign-Poster.png";
-    let textMessage = lang === 'ur'
-        ? `قربانی کی کھالیں مہم 2026 - دعوتِ اسلامی کینٹ ٹاؤن راولپنڈی\n\n`
-        : `Qurbani Hides Campaign 2026 - Dawat-e-Islami Cantt Town Rawalpindi\n\n`;
+    let filename = "Qurbani-Campaign-Poster.png";
 
     let targetRow = null;
 
@@ -54,24 +54,6 @@ function generateAndSharePosterImage(type, referenceKey, targetLang, waWindow = 
                 </div>
             </div>
         `;
-
-        let sharedMapLink = targetRow["Google Map Link"] ? targetRow["Google Map Link"].trim() : "";
-        if (!sharedMapLink && targetRow["cordinates"]) {
-            const cleanCoords = targetRow["cordinates"].trim();
-            if (/^-?\d+\.\d+\s*,\s*-?\d+\.\d+$/.test(cleanCoords)) {
-                sharedMapLink = "https://maps.google.com/?q=" + cleanCoords;
-            } else if (cleanCoords.startsWith("http://") || cleanCoords.startsWith("https://")) {
-                sharedMapLink = cleanCoords;
-            }
-        }
-        if (lang === 'ur') {
-            textMessage += `📍 یو سی: ${targetRow["یو سی"]}\n🏠 ایڈریس: ${address}\n👤 ذمہ دار: ${responsiblePerson}\n📞 رابطہ نمبر: ${targetRow["موبائل نمبر"]}\n`;
-            if (sharedMapLink) textMessage += `🗺️ میپ لوکیشن: ${sharedMapLink}\n`;
-        } else {
-            textMessage += `📍 UC: ${targetRow["uc"] || targetRow["یو سی"]}\n🏠 Address: ${address}\n👤 Responsible: ${responsiblePerson}\n📞 Contact: ${targetRow["موبائل نمبر"]}\n`;
-            if (sharedMapLink) textMessage += `🗺️ Map Location: ${sharedMapLink}\n`;
-        }
-        textMessage += `\n🔗 https://official-bash.github.io/Khall-Collection_Cantt-Town/`;
     }
 
     if (typeof showToast === "function") {
@@ -80,68 +62,35 @@ function generateAndSharePosterImage(type, referenceKey, targetLang, waWindow = 
 
     const captureCanvasTarget = document.getElementById('imagePosterGeneratorCanvas');
 
-    // Set scale to 3.0 for crisp, ultra-high-definition sharing images
+    // Generate the canvas at 3× resolution for a crisp, high-quality image
     htmlToImage.toPng(captureCanvasTarget, { pixelRatio: 3.0, backgroundColor: '#022c22' })
         .then(dataUrl => {
-            // 1. Automatically download the poster graphic to device gallery
-            fallbackDownloadMechanism(dataUrl, filename);
 
-            // 2. Automatically copy the formatted campaign text to clipboard
-            navigator.clipboard.writeText(textMessage)
-                .then(() => {
-                    if (typeof showToast === "function") {
-                        showToast("پوسٹر ڈاؤن لوڈ اور تفصیلات کاپی ہو گئیں / Poster downloaded & text copied!", "success");
-                    }
-                })
-                .catch(err => console.log("Clipboard write failed: ", err));
+            // ── Download poster image to device gallery ──────────────────────
+            const anchor = document.createElement('a');
+            anchor.download = filename;
+            anchor.href = dataUrl;
+            document.body.appendChild(anchor);
+            anchor.click();
+            document.body.removeChild(anchor);
 
-            // 3. Format the responsible person's mobile number using global robust formatter
-            const cleanPhone = formatPhoneNumberForWhatsApp(targetRow["موبائل نمبر"]);
-
-            // 4. Log the share action to Google Sheets immediately
+            // ── Log the share action to Google Sheets ────────────────────────
             if (targetRow && typeof logShareToSheet === "function") {
                 logShareToSheet(targetRow, lang, 'poster');
             }
 
-            // 5. Open the contact directly in WhatsApp
-            if (cleanPhone) {
-                // Pre-fill the text message even in poster sharing so it is ready-to-send!
-                const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(textMessage)}`;
-                
-                if (waWindow) {
-                    // Update location of the pre-opened blank window to bypass popup blocker
-                    waWindow.location.href = waUrl;
-                } else {
-                    window.open(waUrl, "_blank");
-                }
-            } else {
-                if (waWindow) {
-                    try { waWindow.close(); } catch (e) {}
-                }
-                if (typeof showToast === "function") {
-                    showToast("رابطہ نمبر دستیاب نہیں ہے / Contact number not available", "error");
-                }
+            // ── Guide the admin to the next step ────────────────────────────
+            if (typeof showToast === "function") {
+                const nextStepMsg = lang === 'ur'
+                    ? "✅ پوسٹر ڈاؤن لوڈ ہو گیا! اب 'اسٹیپ 2' دبائیں اور گیلری سے تصویر شامل کر کے بھیجیں۔"
+                    : "✅ Poster downloaded! Now tap 'Step 2' to open WhatsApp and attach this image.";
+                showToast(nextStepMsg, "success");
             }
         })
         .catch(err => {
-            console.error('Error generating image', err);
-            if (waWindow) {
-                try { waWindow.close(); } catch (e) {}
-            }
+            console.error('Error generating poster image:', err);
             if (typeof showToast === "function") {
                 showToast("پوسٹر بنانے میں خرابی آئی ہے / Error generating poster", "error");
             }
         });
-}
-
-function fallbackDownloadMechanism(dataUrl, name) {
-    if (typeof showToast === "function") {
-        showToast("Downloading Poster / پوسٹر ڈاؤن لوڈ ہو رہا ہے", "info");
-    }
-    const anchor = document.createElement('a');
-    anchor.download = name;
-    anchor.href = dataUrl;
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
 }

@@ -866,15 +866,14 @@ function handleShareOption(option) {
     const shareLang = checkedRadio ? checkedRadio.value : currentLanguage;
 
     if (option === 'poster') {
-        // ── Open a blank trusted window SYNCHRONOUSLY here (inside the click handler)
-        // ── so mobile browsers (iOS Safari, Chrome) do NOT block the popup.
-        // ── We then pass this window reference to generateAndSharePosterImage which
-        // ── updates its URL once the async canvas rendering completes.
-        const waWindow = window.open('', '_blank');
-        closeShareModal();
-        generateAndSharePosterImage('location', activeShareReferenceKey, shareLang, waWindow);
+        // ── Step 1: Download the poster to device gallery ────────────────────
+        // We do NOT close the modal here so the admin can immediately see
+        // Step 2 and tap it right after the poster downloads.
+        generateAndSharePosterImage('location', activeShareReferenceKey, shareLang);
+
     } else if (option === 'text') {
-        // ── Text sharing is instant (no async), close modal and fire immediately.
+        // ── Step 2: Open WhatsApp directly to the responsible person ────────
+        // The admin attaches the just-downloaded poster image and taps Send.
         closeShareModal();
         shareTextMessage(activeShareReferenceKey, shareLang);
     }
