@@ -1,6 +1,6 @@
 
 // Premium HTML Canvas Dynamic Graphic Image Poster Maker – Admin Panel Version
-function generateAndSharePosterImage(type, referenceKey, targetLang) {
+function generateAndSharePosterImage(type, referenceKey, targetLang, waWindow = null) {
     const lang = targetLang || currentLanguage;
     const canvasTitle = document.getElementById('canvasDynamicTitle');
     const canvasBody  = document.getElementById('canvasDynamicBody');
@@ -95,17 +95,8 @@ function generateAndSharePosterImage(type, referenceKey, targetLang) {
                 })
                 .catch(err => console.log("Clipboard write failed: ", err));
 
-            // 3. Format the responsible person's mobile number
-            const targetMobile = targetRow["موبائل نمبر"] || "";
-            let cleanPhone = "";
-            if (targetMobile) {
-                cleanPhone = String(targetMobile).replace(/\D/g, "");
-                if (cleanPhone.startsWith("03") && cleanPhone.length === 11) {
-                    cleanPhone = "92" + cleanPhone.substring(1);
-                } else if (cleanPhone.startsWith("3") && cleanPhone.length === 10) {
-                    cleanPhone = "92" + cleanPhone;
-                }
-            }
+            // 3. Format the responsible person's mobile number using global robust formatter
+            const cleanPhone = formatPhoneNumberForWhatsApp(targetRow["موبائل نمبر"]);
 
             // 4. Log the share action to Google Sheets immediately
             if (targetRow && typeof logShareToSheet === "function") {
@@ -114,11 +105,19 @@ function generateAndSharePosterImage(type, referenceKey, targetLang) {
 
             // 5. Open the contact directly in WhatsApp
             if (cleanPhone) {
-                setTimeout(() => {
-                    const waUrl = `https://wa.me/${cleanPhone}`;
+                // Pre-fill the text message even in poster sharing so it is ready-to-send!
+                const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(textMessage)}`;
+                
+                if (waWindow) {
+                    // Update location of the pre-opened blank window to bypass popup blocker
+                    waWindow.location.href = waUrl;
+                } else {
                     window.open(waUrl, "_blank");
-                }, 800);
+                }
             } else {
+                if (waWindow) {
+                    try { waWindow.close(); } catch (e) {}
+                }
                 if (typeof showToast === "function") {
                     showToast("رابطہ نمبر دستیاب نہیں ہے / Contact number not available", "error");
                 }
@@ -126,6 +125,9 @@ function generateAndSharePosterImage(type, referenceKey, targetLang) {
         })
         .catch(err => {
             console.error('Error generating image', err);
+            if (waWindow) {
+                try { waWindow.close(); } catch (e) {}
+            }
             if (typeof showToast === "function") {
                 showToast("پوسٹر بنانے میں خرابی آئی ہے / Error generating poster", "error");
             }

@@ -65,17 +65,8 @@ function shareTextMessage(referenceKey, targetLang) {
 
     textMessage += `\n🔗 https://official-bash.github.io/Khall-Collection_Cantt-Town/`;
 
-    // Format phone number to standard international format for WhatsApp wa.me
-    const targetMobile = targetRow["موبائل نمبر"] || "";
-    let cleanPhone = "";
-    if (targetMobile) {
-        cleanPhone = String(targetMobile).replace(/\D/g, "");
-        if (cleanPhone.startsWith("03") && cleanPhone.length === 11) {
-            cleanPhone = "92" + cleanPhone.substring(1);
-        } else if (cleanPhone.startsWith("3") && cleanPhone.length === 10) {
-            cleanPhone = "92" + cleanPhone;
-        }
-    }
+    // Format phone number to standard international format for WhatsApp wa.me using global robust formatter
+    const cleanPhone = formatPhoneNumberForWhatsApp(targetRow["موبائل نمبر"]);
 
     // Direct WhatsApp send using wa.me (opens official WhatsApp directly with ready-to-send text)
     if (cleanPhone) {

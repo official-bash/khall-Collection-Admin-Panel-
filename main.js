@@ -206,19 +206,8 @@ function fetchAdminShareLog() {
 }
 
 // ─── Admin WhatsApp / Location Actions ─────────────────────────────────────
-
-// Helper function to format phone number to standard international format (without + or 00)
-function formatPhoneNumberForWhatsApp(phone) {
-    if (!phone) return "";
-    let clean = String(phone).replace(/\D/g, ""); // Remove non-numbers
-    // If Pakistani local number formats like 03xxxxxxxxx or 3xxxxxxxxx, convert to 923xxxxxxxxx
-    if (clean.startsWith("03") && clean.length === 11) {
-        clean = "92" + clean.substring(1);
-    } else if (clean.startsWith("3") && clean.length === 10) {
-        clean = "92" + clean;
-    }
-    return clean;
-}
+// NOTE: formatPhoneNumberForWhatsApp() is defined in config.js (loaded first)
+// It supports Urdu digits, 0092, 03xx, +92, and all Pakistani formats.
 
 // Admin: Request location from responsible person via direct WhatsApp wa.me
 function adminRequestLocation(phone, name) {
@@ -464,7 +453,7 @@ function renderPointsListMarkup(pointsList, showDistance = false) {
                 mapLink = cleanCoords;
             }
         }
-        const cleanPhone = point["موبائل نمبر"] ? point["موبائل نمبر"].replace(/[^0-9]/g, "") : "";
+        const cleanPhone = formatPhoneNumberForWhatsApp(point["موبائل نمبر"]);
         const srNo = point["نمبر شمار"];
 
         const ucName = currentLanguage === 'ur'
@@ -875,14 +864,20 @@ function closeShareModal() {
 function handleShareOption(option) {
     const checkedRadio = document.querySelector('input[name="shareLangToggle"]:checked');
     const shareLang = checkedRadio ? checkedRadio.value : currentLanguage;
-    closeShareModal();
-    setTimeout(() => {
-        if (option === 'poster') {
-            generateAndSharePosterImage('location', activeShareReferenceKey, shareLang);
-        } else if (option === 'text') {
-            shareTextMessage(activeShareReferenceKey, shareLang);
-        }
-    }, 300);
+
+    if (option === 'poster') {
+        // ── Open a blank trusted window SYNCHRONOUSLY here (inside the click handler)
+        // ── so mobile browsers (iOS Safari, Chrome) do NOT block the popup.
+        // ── We then pass this window reference to generateAndSharePosterImage which
+        // ── updates its URL once the async canvas rendering completes.
+        const waWindow = window.open('', '_blank');
+        closeShareModal();
+        generateAndSharePosterImage('location', activeShareReferenceKey, shareLang, waWindow);
+    } else if (option === 'text') {
+        // ── Text sharing is instant (no async), close modal and fire immediately.
+        closeShareModal();
+        shareTextMessage(activeShareReferenceKey, shareLang);
+    }
 }
 
 // ─── Toast Engine ────────────────────────────────────────────────────────────
