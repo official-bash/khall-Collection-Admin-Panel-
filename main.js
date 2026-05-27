@@ -131,7 +131,7 @@ function applyLanguage() {
 
 // Fetch primary campaign list from App Script Endpoint securely (using GET action)
 function fetchDatasetFromGoogleSheet() {
-    if (API_URL.includes("YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE")) {
+    if (API_URL.includes("YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE") || ADMIN_LOG_API_URL.includes("YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE")) {
         showToast(i18n[currentLanguage].setupIncomplete, "error");
         document.getElementById('appSpinner').innerHTML = `<div class="empty-state" style="color: var(--clr-secondary); font-weight: 800;">${i18n[currentLanguage].configError}</div>`;
         return;
@@ -178,7 +178,7 @@ function fetchDatasetFromGoogleSheet() {
 
 // Fetch the admin share log from the AdminShareLog sheet
 function fetchAdminShareLog() {
-    const url = API_URL + "?action=getShareLog";
+    const url = ADMIN_LOG_API_URL + "?action=getShareLog";
     return fetch(url, { redirect: 'follow' })
         .then(r => r.text())
         .then(text => {
@@ -207,39 +207,42 @@ function fetchAdminShareLog() {
 
 // ─── Admin WhatsApp / Location Actions ─────────────────────────────────────
 
-// Admin: Request location from responsible person via Web Share API
+// Helper function to format phone number to standard international format (without + or 00)
+function formatPhoneNumberForWhatsApp(phone) {
+    if (!phone) return "";
+    let clean = String(phone).replace(/\D/g, ""); // Remove non-numbers
+    // If Pakistani local number formats like 03xxxxxxxxx or 3xxxxxxxxx, convert to 923xxxxxxxxx
+    if (clean.startsWith("03") && clean.length === 11) {
+        clean = "92" + clean.substring(1);
+    } else if (clean.startsWith("3") && clean.length === 10) {
+        clean = "92" + clean;
+    }
+    return clean;
+}
+
+// Admin: Request location from responsible person via direct WhatsApp wa.me
 function adminRequestLocation(phone, name) {
     const msg = i18n[currentLanguage].adminLocationRequestMsg.replace('{name}', name);
-    if (navigator.share) {
-        navigator.share({ text: msg })
-            .catch(err => {
-                console.log("Share cancelled:", err);
-                // Fallback: copy to clipboard
-                navigator.clipboard.writeText(msg).then(() => {
-                    showToast("پیغام کاپی کر لیا گیا – واٹس ایپ میں خود پیسٹ کریں", "info");
-                }).catch(() => {});
-            });
-    } else {
-        navigator.clipboard.writeText(msg).then(() => {
-            showToast("پیغام کاپی کر لیا گیا – واٹس ایپ میں خود پیسٹ کریں", "info");
-        }).catch(() => {});
+    const cleanPhone = formatPhoneNumberForWhatsApp(phone);
+    if (!cleanPhone) {
+        showToast("درست موبائل نمبر دستیاب نہیں ہے / Valid phone number not available", "error");
+        return;
     }
+    const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
+    window.open(whatsappUrl, "_blank");
 }
 
-// Admin: Open WhatsApp greeting via Web Share API (avoids Business WA auto-routing)
+// Admin: Open WhatsApp greeting via direct WhatsApp wa.me
 function adminOpenWhatsApp(phone, name) {
     const greeting = i18n[currentLanguage].adminWhatsappGreeting.replace('{name}', name);
-    if (navigator.share) {
-        navigator.share({ text: greeting })
-            .catch(err => console.log("WhatsApp share cancelled:", err));
-    } else {
-        navigator.clipboard.writeText(greeting).then(() => {
-            showToast("سلام کاپی کر لیا گیا", "info");
-        }).catch(() => {});
+    const cleanPhone = formatPhoneNumberForWhatsApp(phone);
+    if (!cleanPhone) {
+        showToast("درست موبائل نمبر دستیاب نہیں ہے / Valid phone number not available", "error");
+        return;
     }
+    const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(greeting)}`;
+    window.open(whatsappUrl, "_blank");
 }
-
-// ─── Share Log Recording ────────────────────────────────────────────────────
 
 // Log share action to Google Sheets AdminShareLog tab
 function logShareToSheet(point, lang, shareType) {
@@ -249,7 +252,7 @@ function logShareToSheet(point, lang, shareType) {
     const mobile  = point["موبائل نمبر"] || "";
     const address = point["پوائنٹ کا ایڈریس"] || point["location points"] || "";
 
-    const logUrl = API_URL
+    const logUrl = ADMIN_LOG_API_URL
         + "?action=logShare"
         + "&srNo=" + encodeURIComponent(srNo)
         + "&uc=" + encodeURIComponent(uc)

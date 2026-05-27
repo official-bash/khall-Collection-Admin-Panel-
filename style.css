@@ -852,35 +852,73 @@ body::before {
     transform: translateY(-1px);
 }
 
-/* Share (YouTube Pill Style) */
+/* Share Button – Admin Panel Color-Coded States */
 .btn-share {
-    background: rgba(139, 90, 43, 0.08);
-    color: var(--clr-secondary);
-    padding: 8px 16px;
+    padding: 8px 14px;
     border-radius: var(--radius-full);
-    border: 1px solid rgba(139, 90, 43, 0.15);
     display: inline-flex;
     align-items: center;
     gap: 6px;
     font-size: 11px;
     font-weight: 800;
-    transition: all var(--duration-fast) var(--ease-out);
-}
-
-.btn-share:hover {
-    background: rgba(139, 90, 43, 0.16);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-sm);
+    transition: all var(--duration-base) var(--ease-out);
+    border: 1.5px solid;
+    position: relative;
+    overflow: hidden;
 }
 
 .btn-share svg {
-    width: 14px;
-    height: 14px;
+    width: 13px;
+    height: 13px;
     stroke: currentColor;
     fill: none;
     stroke-width: 2.2;
     stroke-linecap: round;
     stroke-linejoin: round;
+    flex-shrink: 0;
+}
+
+/* 🔴 Not yet shared */
+.btn-share.not-sent {
+    background: linear-gradient(135deg, rgba(225, 29, 72, 0.08), rgba(225, 29, 72, 0.04));
+    color: #be123c;
+    border-color: rgba(225, 29, 72, 0.2);
+    animation: pulseRing 3s ease infinite;
+}
+
+.btn-share.not-sent:hover {
+    background: rgba(225, 29, 72, 0.14);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px -4px rgba(225, 29, 72, 0.25);
+    animation: none;
+}
+
+/* 🟡 Partially shared (one language) */
+.btn-share.sent {
+    background: linear-gradient(135deg, rgba(217, 119, 6, 0.1), rgba(245, 158, 11, 0.06));
+    color: #92400e;
+    border-color: rgba(217, 119, 6, 0.22);
+    animation: none;
+}
+
+.btn-share.sent:hover {
+    background: rgba(217, 119, 6, 0.16);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px -4px rgba(217, 119, 6, 0.25);
+}
+
+/* ✅ Both languages shared */
+.btn-share.fully-sent {
+    background: linear-gradient(135deg, rgba(22, 163, 74, 0.1), rgba(34, 197, 94, 0.06));
+    color: #15803d;
+    border-color: rgba(22, 163, 74, 0.22);
+    animation: none;
+}
+
+.btn-share.fully-sent:hover {
+    background: rgba(22, 163, 74, 0.16);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px -4px rgba(22, 163, 74, 0.25);
 }
 
 
@@ -1672,3 +1710,63 @@ body::before {
 .stagger-10 { animation-delay: 0.5s; }
 .stagger-11 { animation-delay: 0.55s; }
 .stagger-12 { animation-delay: 0.6s; }
+
+/* ══════════════════════════════════
+   22. ADMIN PANEL – EXCLUSIVE STYLES
+   ══════════════════════════════════ */
+
+/* Admin Shield Badge in Header */
+.admin-badge {
+    background: linear-gradient(135deg, rgba(15,81,50,0.12), rgba(15,81,50,0.06));
+    border: 1.5px solid rgba(15, 81, 50, 0.2);
+    color: var(--clr-primary);
+    padding: 5px 12px;
+    border-radius: var(--radius-full);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    animation: floatBadge 3s ease-in-out infinite;
+}
+
+/* Language Pills in Share Modal – history-aware coloring */
+label[for="shareLangUr"],
+label[for="shareLangEn"] {
+    transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+
+/* ✅ Already sent in this language */
+.lang-pill-sent {
+    background: linear-gradient(135deg, #dcfce7, #bbf7d0) !important;
+    color: #15803d !important;
+    border: 1.5px solid #86efac !important;
+    box-shadow: 0 2px 6px rgba(22, 163, 74, 0.15) !important;
+}
+
+/* 🔴 Not yet sent in this language */
+.lang-pill-not-sent {
+    background: linear-gradient(135deg, #fff1f2, #ffe4e6) !important;
+    color: #be123c !important;
+    border: 1.5px solid #fecdd3 !important;
+}
+
+/* UC Card Share Progress Label */
+.uc-share-progress {
+    margin-top: 6px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    transition: color var(--duration-base);
+}
+
+/* Pulse on not-sent share button to draw admin attention */
+@keyframes adminPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.25); }
+    50% { box-shadow: 0 0 0 5px rgba(225, 29, 72, 0); }
+}
+
+.btn-share.not-sent {
+    animation: adminPulse 2.5s ease-in-out infinite;
+}
