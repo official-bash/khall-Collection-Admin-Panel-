@@ -23,7 +23,7 @@ function generateAndSharePosterImage(type, referenceKey, targetLang) {
     let targetRow = null;
 
     if (type === 'location') {
-        targetRow = sheetDataset.find(row => row["نمبر شمار"] === referenceKey);
+        targetRow = sheetDataset.find(row => String(row["نمبر شمار"]) === String(referenceKey));
         if (!targetRow) return;
 
         canvasTitle.innerText = `${targetRow["یو سی"]}`;
@@ -83,37 +83,52 @@ function generateAndSharePosterImage(type, referenceKey, targetLang) {
     // Set scale to 3.0 for crisp, ultra-high-definition sharing images
     htmlToImage.toPng(captureCanvasTarget, { pixelRatio: 3.0, backgroundColor: '#022c22' })
         .then(dataUrl => {
-            fetch(dataUrl)
-                .then(res => res.blob())
-                .then(blob => {
-                    const imgFile = new File([blob], filename, { type: 'image/png' });
+            // 1. Automatically download the poster graphic to device gallery
+            fallbackDownloadMechanism(dataUrl, filename);
 
-                    if (navigator.canShare && navigator.canShare({ files: [imgFile] })) {
-                        navigator.share({
-                            files: [imgFile],
-                            title: i18n[lang].title,
-                            text: textMessage
-                        })
-                        .then(() => {
-                            if (typeof showToast === "function") {
-                                showToast(i18n[lang].successShare, "success");
-                            }
-                            // Log the share to Google Sheets after successful poster share
-                            if (targetRow && typeof logShareToSheet === "function") {
-                                logShareToSheet(targetRow, lang, 'poster');
-                            }
-                        })
-                        .catch(err => {
-                            console.log("Poster share cancelled/failed, downloading locally:", err);
-                            fallbackDownloadMechanism(dataUrl, filename);
-                        });
-                    } else {
-                        fallbackDownloadMechanism(dataUrl, filename);
+            // 2. Automatically copy the formatted campaign text to clipboard
+            navigator.clipboard.writeText(textMessage)
+                .then(() => {
+                    if (typeof showToast === "function") {
+                        showToast("پوسٹر ڈاؤن لوڈ اور تفصیلات کاپی ہو گئیں / Poster downloaded & text copied!", "success");
                     }
-                });
+                })
+                .catch(err => console.log("Clipboard write failed: ", err));
+
+            // 3. Format the responsible person's mobile number
+            const targetMobile = targetRow["موبائل نمبر"] || "";
+            let cleanPhone = "";
+            if (targetMobile) {
+                cleanPhone = String(targetMobile).replace(/\D/g, "");
+                if (cleanPhone.startsWith("03") && cleanPhone.length === 11) {
+                    cleanPhone = "92" + cleanPhone.substring(1);
+                } else if (cleanPhone.startsWith("3") && cleanPhone.length === 10) {
+                    cleanPhone = "92" + cleanPhone;
+                }
+            }
+
+            // 4. Log the share action to Google Sheets immediately
+            if (targetRow && typeof logShareToSheet === "function") {
+                logShareToSheet(targetRow, lang, 'poster');
+            }
+
+            // 5. Open the contact directly in WhatsApp
+            if (cleanPhone) {
+                setTimeout(() => {
+                    const waUrl = `https://wa.me/${cleanPhone}`;
+                    window.open(waUrl, "_blank");
+                }, 800);
+            } else {
+                if (typeof showToast === "function") {
+                    showToast("رابطہ نمبر دستیاب نہیں ہے / Contact number not available", "error");
+                }
+            }
         })
         .catch(err => {
             console.error('Error generating image', err);
+            if (typeof showToast === "function") {
+                showToast("پوسٹر بنانے میں خرابی آئی ہے / Error generating poster", "error");
+            }
         });
 }
 
